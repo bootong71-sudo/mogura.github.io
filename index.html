@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>モグラたたき（3x2・ワンインプット対応）</title>
+  <style>
+    :root{
+      --bg: #3b2621;
+      --hole: #000000;
+      --accent: #ffd166;
+      --text: #f2e9e4;
+    }
+    html, body { height: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+      display: grid; grid-template-rows: auto 1fr auto; gap: 12px;
+    }
+    header{ display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px clamp(12px, 2vw, 24px); }
+    .info { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    .stat { font-weight: 800; letter-spacing: .02em; white-space: nowrap; font-size: clamp(18px, 2.6vw, 28px); padding: 6px 10px; border-radius: 12px; background: rgba(255,255,255,.08); }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    label { font-size: 14px; opacity: .9; }
+    input[type=number]{ width: 6.5em; padding: 6px 8px; border-radius: 10px; border: 1px solid rgba(255,255,255,.25); background: rgba(0,0,0,.25); color: var(--text); }
+    button{ border: none; padding: 10px 16px; border-radius: 14px; font-weight: 800; font-size: 16px; cursor: pointer; color: #1b100e; background: var(--accent); box-shadow: 0 6px 16px rgba(0,0,0,.35); }
+    button:disabled{ opacity: .6; cursor: not-allowed; }
+    .board-wrap { position: relative; width: min(1100px, 96vw); margin: 0 auto 16px; aspect-ratio: 3 / 2; }
+    .board { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); gap: clamp(10px, 2vw, 18px); padding: clamp(10px, 2vw, 18px); }
+    .cell { position: relative; display: grid; place-items: center; }
+    .hole { position: relative; width: 100%; height: 100%; border-radius: 999px; background: var(--hole); display: grid; place-items: center; overflow: visible; box-shadow: inset 0 -10px 24px rgba(255,255,255,.05), inset 0 12px 28px rgba(0,0,0,.6); }
+    .mole { position: absolute; width: 68%; height: auto; user-select: none; pointer-events: none; transform: translateY(10%) scale(0.98); opacity: 0; transition: transform .12s ease, opacity .12s ease; filter: drop-shadow(0 6px 12px rgba(0,0,0,.6)); }
+    .mole.show { opacity: 1; transform: translateY(-6%) scale(1); }
+    .overlay { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+    .banner { font-weight: 900; text-align: center; line-height: 1.2; letter-spacing: .03em; font-size: clamp(24px, 4.8vw, 48px); background: rgba(0,0,0,.6); color: var(--accent); padding: 18px 22px; border-radius: 18px; box-shadow: 0 10px 28px rgba(0,0,0,.45); }
+    footer { opacity: .8; font-size: 12px; padding: 0 14px 14px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="info">
+      <div class="stat" id="timeStat">のこり — 秒</div>
+      <div class="stat" id="scoreStat">つかまえた：0 ひき</div>
+    </div>
+    <div class="controls">
+      <label>出現時間(秒)
+        <input id="appearSec" type="number" min="1" max="10" step="1" value="2" />
+      </label>
+      <label>制限時間(秒)
+        <input id="limitSec" type="number" min="30" max="120" step="5" value="60" />
+      </label>
+      <button id="startBtn">スタート</button>
+      <button id="stopBtn" disabled>リセット</button>
+    </div>
+  </header>
+  <main class="board-wrap">
+    <div class="board" id="board">
+      <div class="cell"><div class="hole"></div></div>
+      <div class="cell"><div class="hole"></div></div>
+      <div class="cell"><div class="hole"></div></div>
+      <div class="cell"><div class="hole"></div></div>
+      <div class="cell"><div class="hole"></div></div>
+      <div class="cell"><div class="hole"></div></div>
+    </div>
+    <div class="overlay" aria-live="polite" aria-atomic="true">
+      <div class="banner" id="banner" hidden>モグラ 0 ひき げっとだぜ！</div>
+    </div>
+  </main>
+  <audio id="sndAppear" src="appear.mp3" preload="auto"></audio>
+  <audio id="sndHide"   src="hide.mp3" preload="auto"></audio>
+  <audio id="sndHit"    src="hit.mp3" preload="auto"></audio>
+  <audio id="sndCatch"  src="catch.mp3" preload="auto"></audio>
+  <audio id="sndEnd"    src="end.mp3" preload="auto"></audio>
+  <script>
+  (() => {
+    const board = document.getElementById('board');
+    const cells = Array.from(board.querySelectorAll('.cell'));
+    const timeStat = document.getElementById('timeStat');
+    const scoreStat = document.getElementById('scoreStat');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn  = document.getElementById('stopBtn');
+    const banner = document.getElementById('banner');
+    const sndAppear = document.getElementById('sndAppear');
+    const sndHide   = document.getElementById('sndHide');
+    const sndHit    = document.getElementById('sndHit');
+    const sndCatch  = document.getElementById('sndCatch');
+    const sndEnd    = document.getElementById('sndEnd');
+    const MOLE_IMAGES = ['mole1.png','mole2.png','mole3.png'];
+    let game = null;
+    function setStats(remain, score){
+      timeStat.textContent = `のこり ${remain} 秒`;
+      scoreStat.textContent = `つかまえた：${score} ひき`;
+    }
+    function randomCellIndex(prev) {
+      if (cells.length <= 1) return 0;
+      let idx;
+      do { idx = Math.floor(Math.random() * cells.length); } while (idx === prev);
+      return idx;
+    }
+    function createMoleImg(){
+      const img = document.createElement('img');
+      img.className = 'mole';
+      img.alt = 'モグラ';
+      img.draggable = false;
+      img.src = MOLE_IMAGES[Math.floor(Math.random()*MOLE_IMAGES.length)];
+      return img;
+    }
+    function playSafe(audio){
+      try { const a = audio.cloneNode(true); a.play().catch(()=>{}); } catch(e) {}
+    }
+    function startGame(){
+      if (game) return;
+      const appearSec = Math.max(1, Math.min(10, Number(document.getElementById('appearSec').value)||2));
+      const limitSec  = Math.max(30, Math.min(120, Number(document.getElementById('limitSec').value)||60));
+      startBtn.disabled = true; stopBtn.disabled = false;
+      document.getElementById('appearSec').disabled = true;
+      document.getElementById('limitSec').disabled = true;
+      banner.hidden = true;
+      game = {
+        running: true,
+        appearMs: appearSec * 1000,
+        remain: limitSec,
+        score: 0,
+        currentCell: -1,
+        moleEl: null,
+        timers: new Set(),
+        caughtThisRound: false,
+        canHit: true,
+      };
+      setStats(game.remain, game.score);
+      const onKey = (e) => { if (!game?.running) return; if (game.canHit) registerHit(); };
+      const onPointer = (e) => { if (!game?.running) return; if (game.canHit) registerHit(); };
+      window.addEventListener('keydown', onKey);
+      window.addEventListener('pointerdown', onPointer);
+      game.cleanupInputs = () => {
+        window.removeEventListener('keydown', onKey);
+        window.removeEventListener('pointerdown', onPointer);
+      };
+      const tick = () => {
+        if (!game?.running) return;
+        game.remain -= 1;
+        setStats(game.remain, game.score);
+        if (game.remain <= 0) { endGame(); } else { schedule(tick, 1000); }
+      };
+      schedule(tick, 1000);
+      nextMole(200);
+    }
+    function schedule(fn, ms){
+      const id = setTimeout(() => { game?.timers.delete(id); fn(); }, ms);
+      game?.timers.add(id);
+      return id;
+    }
+    function clearTimers(){ if (!game) return; for (const id of game.timers) clearTimeout(id); game.timers.clear(); }
+    function nextMole(delay=300){ if (!game?.running) return; schedule(spawnMole, delay); }
+    function spawnMole(){
+      if (!game?.running) return;
+      const idx = randomCellIndex(game.currentCell);
+      game.currentCell = idx;
+      const cell = cells[idx];
+      const img = createMoleImg();
+      game.moleEl = img; game.caughtThisRound = false; game.canHit = true;
+      cell.appendChild(img);
+      requestAnimationFrame(() => img.classList.add('show'));
+      playSafe(sndAppear);
+      const hideTimer = schedule(() => hideMole(false), game.appearMs);
+      game.hideTimer = hideTimer;
+    }
+    function hideMole(byCatch){
+      if (!game?.running) return;
+      const img = game.moleEl;
+      if (!img) { nextMole(); return; }
+      game.moleEl = null;
+      img.classList.remove('show');
+      schedule(() => img.remove(), 140);
+      playSafe(sndHide);
+      const randomDelay = (Math.random() * 2000) + 1000; // 1秒～3秒
+      nextMole(randomDelay);
+    }
+    function registerHit(){
+      playSafe(sndHit);
+      if (!game?.running) return;
+      if (game.moleEl && !game.caughtThisRound){
+        game.caughtThisRound = true;
+        game.score += 1; setStats(game.remain, game.score);
+        playSafe(sndCatch);
+        game.canHit = false;
+        if (game.hideTimer) { clearTimeout(game.hideTimer); game.timers.delete(game.hideTimer); }
+        hideMole(true);
+      }
+    }
+    function endGame(){
+      if (!game?.running) return;
+      game.running = false;
+      clearTimers();
+      game.cleanupInputs?.();
+      if (game.moleEl) { game.moleEl.remove(); game.moleEl = null; }
+      banner.textContent = `モグラ ${game.score} ひき げっとだぜ！`;
+      banner.hidden = false;
+      playSafe(sndEnd);
+      startBtn.disabled = false; stopBtn.disabled = true;
+      document.getElementById('appearSec').disabled = false;
+      document.getElementById('limitSec').disabled = false;
+      game = null;
+    }
+    function stopGame(){
+      if (!game){ setStats('—', 0); banner.hidden = true; return; }
+      game.running = false; clearTimers(); game.cleanupInputs?.();
+      if (game.moleEl) game.moleEl.remove();
+      game = null;
+      banner.hidden = true;
+      startBtn.disabled = false; stopBtn.disabled = true;
+      document.getElementById('appearSec').disabled = false;
+      document.getElementById('limitSec').disabled = false;
+      setStats('—', 0);
+    }
+    startBtn.addEventListener('click', startGame);
+    stopBtn.addEventListener('click', stopGame);
+    setStats('—', 0);
+  })();
+  </script>
+</body>
+</html>
